@@ -1,0 +1,13 @@
+numpy
+pandas
+openpyxl
+scikit-learn
+torch
+transformers
+datasets
+accelerate
+huggingface-hub
+matplotlib
+seaborn
+tqdm
+python-dotenv
