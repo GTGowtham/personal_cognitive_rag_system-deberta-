@@ -1,0 +1,29 @@
+model:
+  pretrained_name: microsoft/deberta-v3-small
+  num_labels: 5
+
+tokenization:
+  max_length: 64
+
+data:
+  text_column: thought_text
+  tokenized_path: data/tokenized
+
+training:
+  output_dir: artifacts/models
+  train_batch_size: 4
+  eval_batch_size: 8
+
+  epochs: 3
+  
+  lr: 2e-5
+
+seed: 42
+
+labels:
+  id2label:
+    0: Noise
+    1: Emotion
+    2: Curiosity
+    3: Problem
+    4: Idea
