@@ -1,0 +1,258 @@
+DETAILED LINE-BY-LINE CODE EXPLANATION — THOUGHT CLASSIFIER PROJECT
+
+This document explains every module and nearly every statement in the
+project. The goal is to make the reader understand not only WHAT the
+code does, but WHY each line exists and how the pieces interact at
+runtime.
+
+=====================================================================
+GLOBAL ARCHITECTURE
+=====================================================================
+
+The project is an end-to-end NLP system:
+
+Raw Excel file → load_data.py → preprocess.py → split.py →
+run_data_pipeline.py → hf_tokenize.py → train.py + model_factory.py →
+evaluate.py → predict.py → rules_engine.py
+
+Configuration for all stages is centralized in configs/model.yaml.
+
+=====================================================================
+FILE: configs/model.yaml
+=====================================================================
+
+This YAML file is read by tokenization, training, evaluation, and
+inference scripts.
+
+model: pretrained_name - string - HuggingFace model identifier
+num_labels - integer - number of output classes
+
+tokenization: max_length - integer - number of tokens per input after
+padding/truncation
+
+data: text_column - column name in CSV/Excel containing text
+tokenized_path - directory where HuggingFace DatasetDict is saved
+
+training: output_dir - folder where models/checkpoints go
+train_batch_size / eval_batch_size - integers controlling GPU memory
+usage epochs - number of full passes over training set lr - float
+learning rate for AdamW optimizer
+
+labels: id2label - mapping integer → human-readable label
+
+seed: integer for reproducibility.
+
+=====================================================================
+FILE: src/data/load_data.py
+=====================================================================
+
+import pandas as pd → loads pandas; used for tabular data.
+
+from pathlib import Path → provides OS-independent file paths.
+
+import os → used to compute directories dynamically.
+
+script_dir = os.path.dirname(os.path.abspath(file)) → finds absolute
+directory of this file.
+
+project_root = os.path.dirname(os.path.dirname(script_dir)) → moves two
+levels upward to reach repository root.
+
+data_dir = os.path.join(project_root, “data/raw/thoughts.xlsx”) → builds
+full path to Excel dataset.
+
+required_columns = {“thought_text”, “label”} → set of mandatory columns.
+
+def load_raw_dataset(path): → defines function for ingestion.
+
+path = Path(path) → ensures Path object.
+
+if not path.exists(): → check for missing file.
+
+raise FileNotFoundError → fail fast if absent.
+
+df = pd.read_excel(path) → loads Excel sheet into DataFrame.
+
+missing_columns = required_columns - set(df.columns) → computes
+difference between expected and actual columns.
+
+if missing_columns: → triggers when schema incorrect.
+
+raise ValueError → stops pipeline early.
+
+if df.empty: → dataset has zero rows.
+
+raise ValueError → prevents meaningless training.
+
+return df → returns validated DataFrame.
+
+if name == “main”: → allows direct execution for debugging.
+
+=====================================================================
+FILE: src/data/preprocess.py
+=====================================================================
+
+LABEL_MAP → dictionary mapping string labels to integers.
+
+df = df.copy() → avoids mutating original object.
+
+astype(str) → enforces string type.
+
+str.strip() → removes leading/trailing whitespace.
+
+str.replace(r”+“,” “) → collapses multiple spaces.
+
+issubset → verifies all labels are known.
+
+map(LABEL_MAP) → converts labels to integers.
+
+df[df[“thought_text”].str.len() > 0] → filters empty rows.
+
+return df → returns cleaned dataset.
+
+=====================================================================
+FILE: src/data/split.py
+=====================================================================
+
+train_test_split → sklearn utility for random partitioning.
+
+output_path.mkdir(…) → ensures output directory exists.
+
+train_val, test = train_test_split(… stratify=…) → creates test set
+while preserving class distribution.
+
+val_proportion = val_size / (1 - test_size) → computes validation
+fraction relative to remaining data.
+
+train, val = train_test_split(…) → final split.
+
+to_csv → writes datasets to disk.
+
+=====================================================================
+FILE: src/data/run_data_pipeline.py
+=====================================================================
+
+Imports pipeline components.
+
+RAW_PATH / OUT_DIR → constants defining input/output.
+
+df = load_raw_dataset → ingestion stage.
+
+df = preprocess_dataframe → cleaning stage.
+
+split_and_save → partitioning stage.
+
+Print statements → human-readable progress logging.
+
+=====================================================================
+FILE: src/tokenization/hf_tokenize.py
+=====================================================================
+
+ROOT = Path(file).resolve().parents[2] → climbs directory tree to repo
+root.
+
+yaml.safe_load → parses YAML into Python dict.
+
+AutoTokenizer.from_pretrained → loads vocabulary and token rules.
+
+Dataset.from_pandas → converts DataFrame to HuggingFace Dataset.
+
+dataset.map(…) → applies tokenization batch-wise.
+
+truncation=True → cut sequences longer than max_length.
+
+padding=“max_length” → pad shorter sequences.
+
+save_to_disk → persists Arrow format.
+
+tokenizer.save_pretrained → saves tokenizer config.
+
+=====================================================================
+FILE: src/modeling/model_factory.py
+=====================================================================
+
+AutoConfig.from_pretrained → loads architecture config.
+
+num_labels override → ensures classifier head dimension.
+
+AutoModelForSequenceClassification.from_pretrained → loads pretrained
+encoder + new classification head.
+
+return model → passes model to training script.
+
+=====================================================================
+FILE: src/training/train.py
+=====================================================================
+
+set_seed → fixes randomness.
+
+load_from_disk → loads tokenized DatasetDict.
+
+clean_split → renames label column to ‘labels’ → removes unused columns
+→ sets PyTorch tensor format.
+
+compute_metrics → calculates accuracy, precision, recall, F1.
+
+TrainingArguments → configures optimizer, scheduler, fp16,
+checkpointing, evaluation cadence.
+
+Trainer → HuggingFace high-level training loop.
+
+trainer.train → performs gradient descent iterations.
+
+trainer.save_model → writes final weights.
+
+=====================================================================
+FILE: src/analysis/evaluate.py
+=====================================================================
+
+torch.device → selects GPU or CPU.
+
+DataLoader → batches inference.
+
+with torch.no_grad → disables gradient tracking.
+
+argmax → selects predicted class.
+
+classification_report → sklearn metric summary.
+
+confusion_matrix → error matrix.
+
+errors_df.to_csv → stores misclassified rows.
+
+=====================================================================
+FILE: src/inference/predict.py
+=====================================================================
+
+softmax → converts logits to probabilities.
+
+tokenizer(…) → encodes text into tensors.
+
+model(**encoded) → forward pass.
+
+np.argmax → predicted label index.
+
+generate_insight → calls symbolic rule system.
+
+logs.append → stores predictions for later analysis.
+
+CSV writing → persistent user memory.
+
+=====================================================================
+FILE: src/insights/rules_engine.py
+=====================================================================
+
+load_history → reads CSV safely.
+
+on_bad_lines=“skip” → ignores corrupted rows.
+
+pd.to_datetime → parse timestamps.
+
+count_recent → counts label frequency in window.
+
+generate_insight → applies heuristics based on: label confidence
+repetition patterns.
+
+=====================================================================
+END OF DOCUMENT
+=====================================================================
